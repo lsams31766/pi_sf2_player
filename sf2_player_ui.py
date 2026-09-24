@@ -16,6 +16,9 @@ from sf2_player_fluidsynth import next_preset, previous_preset, get_gain, set_ga
     get_midi_chan_display, get_transpose, raise_midi_transpose, lower_midi_transpose,\
     get_sf2_filenames, get_nbr_sf2_files, load_sf2_file, \
     get_current_prog_details, save_settings_to_file, get_sf_file_index
+from sf2_player_effects import set_effect_configuration, set_effect_parameter
+from sf2_player_controls import load_default_reverb_settings, \
+   load_default_chorus_settings, reverb_controls, chorus_controls
 
 #locations of menu items
 HOME_BANK_X = 5
@@ -41,9 +44,13 @@ SCRN_HOME = 1
 SCRN_MENU = 2
 SCRN_GLOBAL = 3
 SCRN_LOAD_SF = 4
+SCRN_EFFECTS = 5
+SCRN_EFFECTS_SETTINGS = 6
 cur_screen = SCRN_HOME
+
 cur_menu_selection = 0
 nbr_menu_items = 4
+scrn_menu_page = 0 # page number in the menu
 
 GLBL_PARAM_VOL = 0
 GLBL_PARAM_MIDI_CH = 1
@@ -61,6 +68,15 @@ Font1 = ImageFont.truetype("Font/Font02.ttf",32)
 home_bank = 0
 home_program = 1
 home_preset_name = 'Piano 1'
+sReverbState = 'OFF'
+sChorusState = 'OFF'
+effects_item_selected = 0
+
+effect_settings_type = 'reverb' #reverb or chorus
+effect_settings_selected = 0 # which settings is being edited
+current_reverb_settings = [] # list of current reverb settings
+current_chorus_settings = [] # list of current chorus settings
+nbr_effects_settings_per_page = 4
 
 selected_sf2_index = -1 # will get updated in sf screen
 
@@ -69,6 +85,8 @@ def handle_home_screen(n):
     if n == config.KEY1_PIN:
         # goto to menu screen
         cur_screen = SCRN_MENU
+        scrn_menu_page = 0
+        cur_menu_selection = 0
         menu_screen()
     if n == config.KEY_DOWN_PIN:
         # next program
@@ -80,18 +98,36 @@ def handle_home_screen(n):
         home_screen()
 
 def handle_menu_screen(n):
-    global cur_menu_selection,  cur_global_selection, cur_screen
+    global cur_menu_selection,  cur_global_selection, cur_screen, scrn_menu_page, \
+           effects_item_selected
     if n == config.KEY_DOWN_PIN:
         cur_menu_selection += 1
-        if cur_menu_selection == 4:
-            cur_menu_selection = 3
-        menu_screen() # update it
+        # handle paging
+        if scrn_menu_page == 0 and cur_menu_selection == 4:
+            scrn_menu_page = 1
+            cur_menu_selection = 0
+            menu_screen() # update it
+            return
+        if scrn_menu_page == 1:
+            cur_menu_selection = 0 # right now only 1 choice
+        menu_screen() # do not increment here
+
     if n == config.KEY_UP_PIN:
+        if scrn_menu_page == 1: # go to previous page
+            scrn_menu_page = 0
+            cur_menu_selection = 0
+            menu_screen()
+            return
         cur_menu_selection -= 1
         if cur_menu_selection < 0:
             cur_menu_selection = 0
         menu_screen() # update it
     if n == config.KEY_PRESS_PIN:
+        if scrn_menu_page == 1:
+            effects_item_selected = 0
+            cur_screen = SCRN_EFFECTS
+            effects_screen()
+            return
         if cur_menu_selection < 3:
             # items 0,1,2 are global params
             # item 3 is load soundfont
@@ -142,6 +178,76 @@ def handle_load_sf_screen(n):
         load_sf_screen()
         load_sf2_file(selected_sf2_index)
 
+def update_effects_state():
+    if sReverbState == 'OFF' and sChorusState == 'OFF':
+        set_effect_configuration('none')
+    if sReverbState == 'ON' and sChorusState == 'OFF':
+        set_effect_configuration('reverb')
+    if sReverbState == 'OFF' and sChorusState == 'ON':
+        set_effect_configuration('chorus')
+    if sReverbState == 'ON' and sChorusState == 'ON':
+        set_effect_configuration('chorus_reverb')
+
+def handle_effects_settings_screen(n):
+    global effects_item_selected, sReverbState, sChorusState, \
+        effect_settings_type, effect_settings_selected, \
+        cur_screen
+    if n == config.KEY_DOWN_PIN:
+        effects_item_selected += 1
+        if effects_item_selected > 1:
+            effects_item_selected = 1
+        effects_screen()
+    if n == config.KEY_UP_PIN:
+        effects_item_selected -= 1
+        if effects_item_selected < 0:
+            effects_item_selected = 0
+        effects_screen()
+    if n == config.KEY_RIGHT_PIN:
+        if effects_item_selected == 0 and sReverbState == 'OFF': # TURN ON REVERB
+            sReverbState = 'ON'
+        if effects_item_selected == 1 and sChorusState == 'OFF': # TURN ON CHORUS
+            sChorusState = 'ON'
+        update_effects_state()
+        effects_screen()
+    if n == config.KEY_LEFT_PIN:
+        if effects_item_selected == 0 and sReverbState == 'ON': # TURN OFF REVERB
+            sReverbState = 'OFF'
+        if effects_item_selected == 1 and sChorusState == 'ON': # TURN OFF CHORUS
+            sChorusState = 'OFF'
+        update_effects_state()
+        effects_screen()
+    if n == config.KEY_PRESS_PIN: # edit the effect
+        if effects_item_selected == 0 and sReverbState == 'ON':
+            effect_settings_type = 'reverb'
+            cur_screen = SCRN_EFFECTS_SETTINGS
+            effect_settings_selected = 0
+            effects_settings_screen()
+        if effects_item_selected == 1 and sChorusState == 'ON':
+            effect_settings_type = 'chorus'
+            cur_screen = SCRN_EFFECTS_SETTINGS
+            effect_settings_selected = 0
+            effects_settings_screen()
+
+def handle_reverb_chorus_settings_screen(n):
+    global effect_settings_selected
+    print(f'handle_reverb_chorus_settings_screen n {n}')
+    if n == config.KEY_DOWN_PIN:
+        effect_settings_selected += 1
+        effects_settings_screen()
+    if n == config.KEY_UP_PIN:
+        effect_settings_selected -= 1
+        if effect_settings_selected < 0:
+            effect_settings_selected = 0
+        effects_settings_screen()
+    if n == config.KEY_RIGHT_PIN:
+        update_effects_value(True) # increment
+        effects_settings_screen()
+    if n == config.KEY_LEFT_PIN:
+        update_effects_value(False) # decrement
+        effects_settings_screen()
+    # TODO saving reverb or chorus settings by using OSC
+
+        
 def handle_btn(n):
     global cur_screen
     
@@ -163,17 +269,22 @@ def handle_btn(n):
     if device and not device.is_active:
         return
 
+    print(f'handle_btn n{n} screen {cur_screen}')
     if cur_screen == SCRN_HOME:
         handle_home_screen(n)
-    if n == config.KEY2_PIN and cur_screen != SCRN_HOME:
+    elif n == config.KEY2_PIN and cur_screen != SCRN_HOME:
         cur_screen = SCRN_HOME
         home_screen()
-    if cur_screen == SCRN_MENU:
+    elif cur_screen == SCRN_MENU:
         handle_menu_screen(n)
-    if cur_screen == SCRN_GLOBAL:
+    elif cur_screen == SCRN_GLOBAL:
         handle_global_screen(n)
-    if cur_screen == SCRN_LOAD_SF:
+    elif cur_screen == SCRN_LOAD_SF:
         handle_load_sf_screen(n)
+    elif cur_screen == SCRN_EFFECTS:
+        handle_effects_settings_screen(n)
+    elif cur_screen == SCRN_EFFECTS_SETTINGS:
+        handle_reverb_chorus_settings_screen(n)
     # key 3 is save global settings
     if n == config.KEY3_PIN:
         save_settings_to_file()
@@ -226,12 +337,17 @@ def home_screen():
     disp.ShowImage(im_r)
 
 def menu_screen():
-    items = ['VOLUME', 'MIDI CH', 'TRANSPOSE', 'LOAD SOUNDFONT']
+    items_page_0 = ['VOLUME', 'MIDI CH', 'TRANSPOSE', 'LOAD SOUNDFONT']
+    items_page_1 = ['EFFECTS']
     image1 = Image.new("RGB", (240, 240), (0, 0, 255))
     draw1 = ImageDraw.Draw(image1)
     y = HOME_SEL1_Y + 20
     draw1.text((MENU_TITLE_X, HOME_TITLE_Y), 'SELECT:', fill = "WHITE",font=Font1)
-    for index, item in enumerate(items):
+    if scrn_menu_page == 0:  
+        list_items = items_page_0
+    if scrn_menu_page == 1:  
+        list_items = items_page_1
+    for index, item in enumerate(list_items):
         s = item
         if index == cur_menu_selection:
             s = '->' + item
@@ -298,3 +414,121 @@ def load_sf_screen():
     im_r1=image1.rotate(90)
     disp.ShowImage(im_r1)
 
+def effects_screen():
+    '''
+       EFFECTS SETTING
+    
+       REVERB: OFF
+       CHORUS: OFF
+    '''
+    #print(f'EFFECTS SETTING SCREEN')
+    image1 = Image.new("RGB", (240, 240), (0, 0, 255))
+    draw1 = ImageDraw.Draw(image1)
+
+    y = 2 * HOME_SEL1_Y
+    # handle text and selection arrow
+    sReverb = 'REVERB: ' + sReverbState
+    sChorus = 'CHORUS: ' + sChorusState
+    if effects_item_selected == 0:
+        sReverb = '->' + sReverb
+    if effects_item_selected == 1:
+        sChorus = '->' + sChorus
+    
+    draw1.text((5, HOME_TITLE_Y), 'EFFECTS SETTING', fill = "WHITE",font=Font1)
+    draw1.text((HOME_SELECTION_X, y), sReverb, fill = "WHITE",font=Font1)
+    y += HOME_SEL1_Y
+    draw1.text((HOME_SELECTION_X, y), sChorus, fill = "WHITE",font=Font1)
+    im_r1=image1.rotate(90)
+    disp.ShowImage(im_r1)
+
+def effects_settings_screen():
+    '''
+       REVERB SETTINGS  -> can be CHORUS SETTINGS
+    
+       REVERB: OFF
+       CHORUS: OFF
+    '''
+    # nbr_effects_settings_per_page = 4
+    global current_reverb_settings, current_chorus_settings, effect_settings_selected
+    #print(f'REVERB/CHORUS SETTING SCREEN')
+    image1 = Image.new("RGB", (240, 240), (0, 0, 255))
+    draw1 = ImageDraw.Draw(image1)
+    y = 2 * HOME_SEL1_Y - 20
+    # if current settings is blank, load defaults
+    temp_settings = []
+    if effect_settings_type == 'reverb':
+        title_text = "REVERB SETTINGS"
+        if current_reverb_settings == []:
+            current_reverb_settings = load_default_reverb_settings()
+            temp_settings = current_reverb_settings
+        else:
+            temp_settings = current_reverb_settings
+    if effect_settings_type == 'chorus':
+        title_text = "CHORUS SETTINGS"
+        if current_chorus_settings == []:
+            current_chorus_settings = load_default_chorus_settings()
+            temp_settings = current_chorus_settings
+        else:
+            temp_settings = current_chorus_settings
+    draw1.text((5, HOME_TITLE_Y), title_text, fill = "WHITE",font=Font1)
+    # paging
+    if effect_settings_selected >= len(temp_settings):
+        effect_settings_selected = len(temp_settings) -1
+    page = effect_settings_selected // nbr_effects_settings_per_page
+    first_index = page * nbr_effects_settings_per_page
+    last_index = min(first_index + nbr_effects_settings_per_page, len(temp_settings))
+    print(f'temp_settings {temp_settings}')
+    print(f'range {first_index} to {last_index}')
+    print(f'effect_settings_selected {effect_settings_selected}')
+    i = first_index
+    while i < last_index:
+        s = f"{temp_settings[i][0]}: {temp_settings[i][1]}"
+        if i == effect_settings_selected:
+            s = '->' + s
+        draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
+        y += HOME_SEL_Y_OFFSET
+        i += 1
+    im_r1=image1.rotate(90)
+    disp.ShowImage(im_r1)
+
+def get_range(cur_params, effect_type):
+    val_name = cur_params[0]
+    if effect_type == 'reverb':
+        controls = reverb_controls
+    if effect_type == 'chorus':
+        controls = chorus_controls
+    for item in controls:
+        if item["name"] == val_name:
+            return item 
+
+def format_number(val):
+    if isinstance(val, int):
+        return val
+    elif isinstance(val, float):
+        return round(val, 2)
+    return val
+
+def update_effects_value(increment=True):
+    global current_reverb_settings, current_chorus_settings
+    # cur is name of param and current value
+    if effect_settings_type == 'reverb':
+        cur = current_reverb_settings[effect_settings_selected]
+    if effect_settings_type == 'chorus':
+        cur = current_chorus_settings[effect_settings_selected]
+    cur_name = cur[0]
+    cur_value = cur[1]
+    # val_range is possible range of values and increment
+    val_range = get_range(cur, effect_settings_type)
+    if increment == True:
+        new_value = min(cur[1] + val_range['inc'], val_range['max'])
+    else: #decrement
+        new_value = max(cur[1] - val_range['inc'], val_range['min'])
+    new_value = format_number(new_value) # limit to 2 decimal places
+    if effect_settings_type == 'reverb':
+        current_reverb_settings[effect_settings_selected] = (cur_name, new_value)
+    if effect_settings_type == 'chorus':
+        current_chorus_settings[effect_settings_selected] = (cur_name, new_value)
+    # change on the jalv instance
+    set_effect_parameter(effect_settings_type, cur_name, new_value)
+    
+    

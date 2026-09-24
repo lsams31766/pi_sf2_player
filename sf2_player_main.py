@@ -10,10 +10,11 @@ from sf2_player_effects import start_effects_containers, set_effect_configuratio
 
 
 init_buttons()
-splash_screen()
 init_fluidsynth(effect_callback=start_effects_containers)
+splash_screen()
 time.sleep(2)
-set_effect_configuration('chorus_reverb')
+#set_effect_configuration('chorus_reverb')
+set_effect_configuration('none')
 home_screen()
 
 try:

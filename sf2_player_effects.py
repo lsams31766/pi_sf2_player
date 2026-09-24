@@ -34,14 +34,17 @@ ALL_POSSIBLE_LINKS = [
 ]
 
 def start_effects_containers(max_wait=5.0, poll_interval=0.25):
-    """Launch both reverb and chorus jalv containers in the background."""
+    """Launch both reverb and chorus jalv containers in the background with stdin support."""
     global jalv_reverb_process, jalv_chorus_process
 
     print(f"Starting effects containers...")
     try:
         jalv_reverb_process = subprocess.Popen(
             ["pw-jack", "jalv", REVERB_PLUGIN_URI],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL,
+            text=True
         )
     except FileNotFoundError as e:
         print(f"Could not launch reverb jalv ({e}).")
@@ -49,7 +52,10 @@ def start_effects_containers(max_wait=5.0, poll_interval=0.25):
     try:
         jalv_chorus_process = subprocess.Popen(
             ["pw-jack", "jalv", CHORUS_PLUGIN_URI],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL,
+            text=True
         )
     except FileNotFoundError as e:
         print(f"Could not launch chorus jalv ({e}).")
@@ -65,6 +71,32 @@ def start_effects_containers(max_wait=5.0, poll_interval=0.25):
         print("Effects containers initialized successfully.")
     else:
         print("Warning: Some effect ports failed to appear.")
+
+def set_effect_parameter(effect_type, symbol, value):
+    """
+    Update a setting on the fly for either 'reverb' or 'chorus' 
+    using Jalv's interactive stdin control interface.
+    Example: set_effect_parameter('reverb', 'out_mix', 1.0)
+    """
+    proc = None
+    if effect_type == 'reverb':
+        proc = jalv_reverb_process
+    elif effect_type == 'chorus':
+        proc = jalv_chorus_process
+    else:
+        print(f"Error: Unknown effect type '{effect_type}'")
+        return
+
+    if proc and proc.poll() is None:
+        try:
+            command = f"set {symbol} {value}\n"
+            proc.stdin.write(command)
+            proc.stdin.flush()
+            print(f"[{effect_type}] Set {symbol} -> {value}")
+        except Exception as e:
+            print(f"Error writing to {effect_type} process: {e}")
+    else:
+        print(f"Error: {effect_type} container process is not running.")
 
 def set_effect_configuration(config_name):
     """
@@ -162,3 +194,4 @@ def stop_effects_containers():
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        
