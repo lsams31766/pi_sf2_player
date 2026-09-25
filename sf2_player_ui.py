@@ -19,6 +19,7 @@ from sf2_player_fluidsynth import next_preset, previous_preset, get_gain, set_ga
 from sf2_player_effects import set_effect_configuration, set_effect_parameter
 from sf2_player_controls import load_default_reverb_settings, \
    load_default_chorus_settings, reverb_controls, chorus_controls
+from sf2_player_settings import load_settings
 
 #locations of menu items
 HOME_BANK_X = 5
@@ -68,6 +69,7 @@ Font1 = ImageFont.truetype("Font/Font02.ttf",32)
 home_bank = 0
 home_program = 1
 home_preset_name = 'Piano 1'
+effects_configured = False
 sReverbState = 'OFF'
 sChorusState = 'OFF'
 effects_item_selected = 0
@@ -81,7 +83,7 @@ nbr_effects_settings_per_page = 4
 selected_sf2_index = -1 # will get updated in sf screen
 
 def handle_home_screen(n):
-    global cur_screen, home_bank, home_program, home_preset_name 
+    global cur_screen, home_bank, home_program, home_preset_name
     if n == config.KEY1_PIN:
         # goto to menu screen
         cur_screen = SCRN_MENU
@@ -245,7 +247,6 @@ def handle_reverb_chorus_settings_screen(n):
     if n == config.KEY_LEFT_PIN:
         update_effects_value(False) # decrement
         effects_settings_screen()
-    # TODO saving reverb or chorus settings by using OSC
 
         
 def handle_btn(n):
@@ -287,9 +288,10 @@ def handle_btn(n):
         handle_reverb_chorus_settings_screen(n)
     # key 3 is save global settings
     if n == config.KEY3_PIN:
-        save_settings_to_file()
-
-
+        reverb_enabled = True if sReverbState == 'ON' else False
+        chorus_enabled = True if sChorusState == 'ON' else False
+        save_settings_to_file(current_reverb_settings, current_chorus_settings,
+           reverb_enabled, chorus_enabled)
 
 def init_buttons():
     # Hook into the existing DigitalInputDevice objects already created by config.py / ST7789
@@ -315,7 +317,46 @@ def splash_screen():
     im_r=image1.rotate(90)
     disp.ShowImage(im_r)
 
+def update_all_effects_settings(effects_type):
+    global current_reverb_settings, current_chorus_settings
+    print(f'->update_all_effects_settings {effects_type}')
+    ls = load_settings()
+    if effects_type == 'reverb':
+        current_reverb_settings = convert_json_to_tuples_list(ls,'reverb')
+        # push them to the effect
+        for item in current_reverb_settings:
+            cur_name = item[0]
+            cur_value = item[1]
+            set_effect_parameter(effects_type, cur_name, cur_value)
+    if effects_type == 'chorus':
+        current_chorus_settings = convert_json_to_tuples_list(ls,'chorus')
+        # push them to the effect
+        for item in current_chorus_settings:
+            cur_name = item[0]
+            cur_value = item[1]
+            set_effect_parameter(effects_type, cur_name, cur_value)
+ 
+def load_initial_effects():
+    global sReverbState, sChorusState
+    print('-->load_initial_effects')
+    # if we just loaded the program, set reverb/chorus on if necessary
+    ls = load_settings() # see if reverb/chorus enabled
+    r_en = ls.get('reverb_enabled',None)
+    c_en = ls.get('chorus_enabled',None)
+    if r_en != None and r_en == True:
+        sReverbState = 'ON'
+        update_all_effects_settings('reverb')
+    if c_en != None and c_en == True:
+        sChorusState = 'ON'
+        update_all_effects_settings('chorus')
+    update_effects_state()
+    effects_configured = True    
+
 def home_screen():
+    global effects_configured
+    if effects_configured == False:
+        load_initial_effects()
+        effects_configured = True
     # blue background
     image1 = Image.new("RGB", (240, 240), (0, 0, 255))
     draw = ImageDraw.Draw(image1)
@@ -441,6 +482,16 @@ def effects_screen():
     im_r1=image1.rotate(90)
     disp.ShowImage(im_r1)
 
+def convert_json_to_tuples_list(loaded_settings, effect_type):
+    # get the params for effect_type given
+    p = loaded_settings[effect_type]
+    # put in list, in form ('delay', 1), etc
+    l = []
+    for item in p:
+        #['delay', 0.06],  to ('delay', 1)
+        l.append((item[0],item[1]))
+    return l 
+
 def effects_settings_screen():
     '''
        REVERB SETTINGS  -> can be CHORUS SETTINGS
@@ -458,15 +509,34 @@ def effects_settings_screen():
     temp_settings = []
     if effect_settings_type == 'reverb':
         title_text = "REVERB SETTINGS"
+        # if we don't have current settings
+        #  1) try to read saved settings
+        #  2) if no saved settings, then use default settings
         if current_reverb_settings == []:
-            current_reverb_settings = load_default_reverb_settings()
+            # try to get saved settings
+            print('-->Reverb settings not found')
+            ls = load_settings()
+            print(f'-->ls {ls}')
+            if ls.get('reverb_enabled','None') != None:
+                current_reverb_settings = convert_json_to_tuples_list(ls,'reverb')
+                print(f'-->current_reverb_settings {current_reverb_settings}')
+            else:
+                current_reverb_settings = load_default_reverb_settings()
             temp_settings = current_reverb_settings
         else:
             temp_settings = current_reverb_settings
     if effect_settings_type == 'chorus':
         title_text = "CHORUS SETTINGS"
+        # if we don't have current settings
+        #  1) try to read saved settings
+        #  2) if no saved settings, then use default settings
         if current_chorus_settings == []:
-            current_chorus_settings = load_default_chorus_settings()
+            # try to get saved settings
+            ls = load_settings()
+            if ls.get('chorus_enabled','None') != None:
+                current_chorus_settings = convert_json_to_tuples_list(ls,'chorus')
+            else:
+                current_chorus_settings = load_default_chorus_settings()
             temp_settings = current_chorus_settings
         else:
             temp_settings = current_chorus_settings

@@ -9,6 +9,7 @@ import fluidsynth
 import mido
 from pathlib import Path
 from sf2_player_settings import save_settings, load_settings
+from sf2_player_controls import load_default_reverb_settings, load_default_chorus_settings
 
 fs = None
 
@@ -316,12 +317,23 @@ def load_sf2_file(selected_sf2_index):
 def get_current_prog_details():
     return current_bank, current_program, current_instrument_name
 
-def save_settings_to_file():
-    print('save_settings_to_file')
+def save_settings_to_file(current_reverb_settings, current_chorus_settings, reverb_enabled, chorus_enabled):
+    if current_reverb_settings == []:
+        temp_reverb_settings = load_default_reverb_settings()
+    else:
+        temp_reverb_settings = current_reverb_settings
+    if current_chorus_settings == []:
+        temp_chorus_settings = load_default_chorus_settings()
+    else:
+        temp_chorus_settings = current_chorus_settings
     current_settings = {
         "master_volume": round(current_gain, 2),
         "midi_channel": get_midi_chan_display(),
         "transpose": midi_transpose,
-        "soundfont_filename": current_sf2_name
+        "soundfont_filename": current_sf2_name,
+        "reverb_enabled":reverb_enabled,
+        "chorus_enabled":chorus_enabled,
+        "reverb":temp_reverb_settings,
+        "chorus":temp_chorus_settings
     }
     save_settings(current_settings)
