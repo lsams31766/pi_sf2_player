@@ -31,6 +31,9 @@ sf2_directory = '/usr/share/sounds/sf2/'
 nbr_sf2_files = 1 
 current_sf2_name = 'unknown'
 
+active_layer_channels = [0]
+split_point = -1
+
 
 def find_launchkey_port():
     """Dynamically find the keyboard port name to avoid strict string mismatches."""
@@ -44,7 +47,7 @@ def find_launchkey_port():
     return None
 
 def midi_listener_thread():
-    """Background thread that captures USB MIDI, applies filters/transposition, and plays notes."""
+    """Background thread that captures USB MIDI, applies filters/transposition, and plays notes on all active layer channels."""
     global midi_thread_running
     
     time.sleep(1.0)
@@ -64,27 +67,48 @@ def midi_listener_thread():
                 if input_filter_channel is not None:
                    if hasattr(msg, 'channel') and msg.channel != input_filter_channel:
                        continue 
-                
-                dest_channel = TARGET_MIDI_CHANNEL
 
                 if msg.type == 'note_on':
-                    #print('none on')
                     new_note = max(0, min(127, msg.note + midi_transpose))
-                    if msg.velocity > 0:
-                        fs.noteon(dest_channel, new_note, msg.velocity)
+                    #handle split mode
+                    # if len(active_layer_channels) == 2:
+                    #     s = f'note_on sp {split_point}, alc0: {active_layer_channels[0]}'
+                    #     s += f' alc1: {active_layer_channels[1]}'
+                    #     s += f' msg.channel {msg.channel}, new_note {new_note}'
+                    #     print(s)
+                    if split_point > 0 and len(active_layer_channels) == 2:
+                        if msg.channel == active_layer_channels[0] and \
+                            new_note < split_point:
+                                if msg.velocity > 0:
+                                    fs.noteon(active_layer_channels[0], new_note, msg.velocity)
+                                else:
+                                    fs.noteoff(active_layer_channels[0], new_note)
+                        elif msg.channel == active_layer_channels[0] and \
+                            new_note >= split_point:
+                                if msg.velocity > 0:
+                                    fs.noteon(active_layer_channels[1], new_note, msg.velocity)
+                                else:
+                                    fs.noteoff(active_layer_channels[1], new_note)
                     else:
-                        fs.noteoff(dest_channel, new_note)
+                        for dest_channel in active_layer_channels:
+                            if msg.velocity > 0:
+                                fs.noteon(dest_channel, new_note, msg.velocity)
+                            else:
+                                fs.noteoff(dest_channel, new_note)
                         
                 elif msg.type == 'note_off':
                     new_note = max(0, min(127, msg.note + midi_transpose))
-                    fs.noteoff(dest_channel, new_note)
+                    for dest_channel in active_layer_channels:
+                        fs.noteoff(dest_channel, new_note)
                     
                 elif msg.type == 'control_change':
-                    fs.cc(dest_channel, msg.control, msg.value)
+                    for dest_channel in active_layer_channels:
+                        fs.cc(dest_channel, msg.control, msg.value)
                     
                 elif msg.type == 'pitchwheel':
-                    fs.pitch_bend(dest_channel, msg.pitch)
-                    
+                    for dest_channel in active_layer_channels:
+                        fs.pitch_bend(dest_channel, msg.pitch)
+                        
     except Exception as e:
         print(f"MIDI Listener Error: {e}")
         midi_thread_running = False
@@ -337,3 +361,52 @@ def save_settings_to_file(current_reverb_settings, current_chorus_settings, reve
         "chorus":temp_chorus_settings
     }
     save_settings(current_settings)
+
+#-----------LAYERING---------------------------#
+def layer_sounds(midi_chan1, bank1, prog1, midi_chan2, bank2, prog2):
+    """
+    Configures two MIDI channels with specific SoundFont banks and programs,
+    and sets them up to be triggered simultaneously by incoming MIDI data.
+    Note: midi_chan1 and midi_chan2 are 1-based (e.g., 1 and 2).
+    """
+    global active_layer_channels, fs, current_sf_id
+    if fs is None or current_sf_id == 0:
+        print("FluidSynth not initialized or SoundFont not loaded.")
+        return
+
+    # Convert 1-based MIDI channels to 0-based FluidSynth channels
+    ch1 = midi_chan1 - 1
+    ch2 = midi_chan2 - 1
+
+    # Assign presets to both channels
+    fs.program_select(ch1, current_sf_id, bank1, prog1)
+    fs.program_select(ch2, current_sf_id, bank2, prog2)
+
+    # Set them as the active broadcast channels for the listener thread
+    active_layer_channels = [ch1, ch2]
+    
+    print(f"Layering active: MIDI Ch {midi_chan1} (Bank {bank1}, Prog {prog1}) + "
+          f"MIDI Ch {midi_chan2} (Bank {bank2}, Prog {prog2})")    
+
+def lookup_prog_name_from_prog_number(prog_nbr):
+    try:
+        name_query = fs.sfpreset_name(current_sf_id, current_bank, prog_nbr)
+        if name_query:
+            return name_query
+    except Exception:
+        return 'Unknown'
+
+def fs_turn_off_layering():
+    global active_layer_channels, split_point
+    active_layer_channels = [0]
+    split_point = -1 
+
+def split_keyboard(new_split_point):
+    global split_point
+    split_point = new_split_point
+
+def turn_off_split_keyboard():
+    split_point = -1
+
+
+

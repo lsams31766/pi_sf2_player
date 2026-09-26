@@ -15,7 +15,9 @@ from sf2_player_fluidsynth import next_preset, previous_preset, get_gain, set_ga
     lower_gain, raise_gain, lower_midi_chan, raise_midi_chan, \
     get_midi_chan_display, get_transpose, raise_midi_transpose, lower_midi_transpose,\
     get_sf2_filenames, get_nbr_sf2_files, load_sf2_file, \
-    get_current_prog_details, save_settings_to_file, get_sf_file_index
+    get_current_prog_details, save_settings_to_file, get_sf_file_index, \
+    layer_sounds, lookup_prog_name_from_prog_number, fs_turn_off_layering, \
+    split_keyboard, turn_off_split_keyboard
 from sf2_player_effects import set_effect_configuration, set_effect_parameter
 from sf2_player_controls import load_default_reverb_settings, \
    load_default_chorus_settings, reverb_controls, chorus_controls
@@ -47,11 +49,17 @@ SCRN_GLOBAL = 3
 SCRN_LOAD_SF = 4
 SCRN_EFFECTS = 5
 SCRN_EFFECTS_SETTINGS = 6
+SCREN_LAYER_SPLIT = 7
 cur_screen = SCRN_HOME
 
 cur_menu_selection = 0
-nbr_menu_items = 4
-scrn_menu_page = 0 # page number in the menu
+nbr_menu_items = 6
+MNU_VOLUME = 0
+MNU_MIDI_CH = 1
+MNU_TRANSPOSE = 2
+MNU_LOAD_SF = 3
+MNU_EFFECTS = 4
+MNU_LAYER_SPLIT = 5
 
 GLBL_PARAM_VOL = 0
 GLBL_PARAM_MIDI_CH = 1
@@ -78,16 +86,25 @@ effect_settings_type = 'reverb' #reverb or chorus
 effect_settings_selected = 0 # which settings is being edited
 current_reverb_settings = [] # list of current reverb settings
 current_chorus_settings = [] # list of current chorus settings
-nbr_effects_settings_per_page = 4
+nbr_settings_per_page = 4
 
 selected_sf2_index = -1 # will get updated in sf screen
+
+layer_split_choices = ['LAYER','SPLIT']
+layer_split_index = 0
+cur_layer_split_choice = 0 # 0 for layer 1 for split
+split_point = 60
+layer_1_prog_number = 0
+layer_2_prog_number = 1
+MAX_PROG_NUMBER = 127
+MAX_MIDI_NOTE_NUMBER = 108
+MIN_MIDI_NOTE_NUMBER = 21
 
 def handle_home_screen(n):
     global cur_screen, home_bank, home_program, home_preset_name
     if n == config.KEY1_PIN:
         # goto to menu screen
         cur_screen = SCRN_MENU
-        scrn_menu_page = 0
         cur_menu_selection = 0
         menu_screen()
     if n == config.KEY_DOWN_PIN:
@@ -100,45 +117,36 @@ def handle_home_screen(n):
         home_screen()
 
 def handle_menu_screen(n):
-    global cur_menu_selection,  cur_global_selection, cur_screen, scrn_menu_page, \
+    global cur_menu_selection,  cur_global_selection, cur_screen, \
            effects_item_selected
     if n == config.KEY_DOWN_PIN:
         cur_menu_selection += 1
-        # handle paging
-        if scrn_menu_page == 0 and cur_menu_selection == 4:
-            scrn_menu_page = 1
-            cur_menu_selection = 0
-            menu_screen() # update it
-            return
-        if scrn_menu_page == 1:
-            cur_menu_selection = 0 # right now only 1 choice
+        if cur_menu_selection >= nbr_menu_items:
+            cur_menu_selection = nbr_menu_items - 1
         menu_screen() # do not increment here
 
     if n == config.KEY_UP_PIN:
-        if scrn_menu_page == 1: # go to previous page
-            scrn_menu_page = 0
-            cur_menu_selection = 0
-            menu_screen()
-            return
         cur_menu_selection -= 1
         if cur_menu_selection < 0:
             cur_menu_selection = 0
         menu_screen() # update it
     if n == config.KEY_PRESS_PIN:
-        if scrn_menu_page == 1:
-            effects_item_selected = 0
-            cur_screen = SCRN_EFFECTS
-            effects_screen()
-            return
-        if cur_menu_selection < 3:
-            # items 0,1,2 are global params
-            # item 3 is load soundfont
+        if cur_menu_selection in [MNU_VOLUME,MNU_MIDI_CH,MNU_TRANSPOSE]:
             cur_global_selection = cur_menu_selection
             cur_screen = SCRN_GLOBAL
             global_param_screen()
-        if cur_menu_selection == 3:
+        if cur_menu_selection == MNU_LOAD_SF:
             cur_screen = SCRN_LOAD_SF
             load_sf_screen()
+        if cur_menu_selection == MNU_EFFECTS:
+            effects_item_selected = 0
+            cur_screen = SCRN_EFFECTS
+            effects_screen()
+        if cur_menu_selection == MNU_LAYER_SPLIT:
+            effects_item_selected = 0
+            cur_screen = SCREN_LAYER_SPLIT
+            layer_split_screen()
+
 
 def handle_global_screen(n):
     global cur_menu_selection,  cur_global_selection, cur_screen
@@ -232,7 +240,7 @@ def handle_effects_settings_screen(n):
 
 def handle_reverb_chorus_settings_screen(n):
     global effect_settings_selected
-    print(f'handle_reverb_chorus_settings_screen n {n}')
+    #print(f'handle_reverb_chorus_settings_screen n {n}')
     if n == config.KEY_DOWN_PIN:
         effect_settings_selected += 1
         effects_settings_screen()
@@ -248,7 +256,81 @@ def handle_reverb_chorus_settings_screen(n):
         update_effects_value(False) # decrement
         effects_settings_screen()
 
-        
+def handle_layer_split_screen(n):
+    global cur_layer_split_choice, split_point, layer_split_index, \
+        layer_1_prog_number, layer_2_prog_number
+    #print(f'handle_layer_split_screen n {n} choice {cur_layer_split_choice} \
+    # split {split_point} index {layer_split_index}')
+    if cur_layer_split_choice == 0:
+        last_index = 1
+    else:
+        last_index = 2
+        layer_split_screen()
+    if n == config.KEY_DOWN_PIN:
+        #print('key_down')
+        layer_split_index += 1
+        if layer_split_index > last_index:
+            layer_split_index = last_index
+        layer_split_screen()
+    if n == config.KEY_UP_PIN:
+        #print('key_up')
+        layer_split_index -= 1
+        if layer_split_index < 0:
+            layer_split_index = 0
+        layer_split_screen()
+
+    if n == config.KEY_PRESS_PIN: # toggle layer/split
+        #print('key_press')
+        if cur_layer_split_choice == 0:
+            cur_layer_split_choice = 1
+            split_keyboard(split_point)
+        else:
+            cur_layer_split_choice = 0
+            turn_off_split_keyboard()
+        layer_split_screen()
+    if n == config.KEY_RIGHT_PIN: # increment element
+        #print('key_right')
+        if (cur_layer_split_choice == 0 and layer_split_index == 0) or \
+           (cur_layer_split_choice == 1 and layer_split_index == 1):
+            layer_1_prog_number += 1
+            if layer_1_prog_number > MAX_PROG_NUMBER:
+                layer_1_prog_number = MAX_PROG_NUMBER
+            else:
+                update_layer_sound()
+        elif (cur_layer_split_choice == 0 and layer_split_index == 1) or \
+             (cur_layer_split_choice == 1 and layer_split_index == 2):
+            layer_2_prog_number += 1
+            if layer_2_prog_number > MAX_PROG_NUMBER:
+                layer_2_prog_number = MAX_PROG_NUMBER
+            else:
+                update_layer_sound()
+        elif (cur_layer_split_choice == 1 and layer_split_index == 0): 
+            split_point += 1
+            if split_point > MAX_MIDI_NOTE_NUMBER:
+                split_point = MAX_MIDI_NOTE_NUMBER
+            else:
+                split_keyboard(split_point)
+        layer_split_screen()
+    if n == config.KEY_LEFT_PIN: # decrement element
+        #print('key_left')
+        if (cur_layer_split_choice == 0 and layer_split_index == 0) or \
+           (cur_layer_split_choice == 1 and layer_split_index == 1):
+            layer_1_prog_number -= 1
+            if layer_1_prog_number < 0:
+                layer_1_prog_number = 0
+        elif (cur_layer_split_choice == 0 and layer_split_index == 1) or \
+             (cur_layer_split_choice == 1 and layer_split_index == 2):
+            layer_2_prog_number -= 1
+            if layer_2_prog_number < 0:
+                layer_2_prog_number = 0
+        elif (cur_layer_split_choice == 1 and layer_split_index == 0): 
+            split_point -= 1
+            if split_point < MIN_MIDI_NOTE_NUMBER:
+                split_point = MIN_MIDI_NOTE_NUMBER
+            else:
+                split_keyboard(split_point)
+        layer_split_screen()
+
 def handle_btn(n):
     global cur_screen
     
@@ -270,7 +352,7 @@ def handle_btn(n):
     if device and not device.is_active:
         return
 
-    print(f'handle_btn n{n} screen {cur_screen}')
+    #print(f'handle_btn n{n} screen {cur_screen}')
     if cur_screen == SCRN_HOME:
         handle_home_screen(n)
     elif n == config.KEY2_PIN and cur_screen != SCRN_HOME:
@@ -286,12 +368,17 @@ def handle_btn(n):
         handle_effects_settings_screen(n)
     elif cur_screen == SCRN_EFFECTS_SETTINGS:
         handle_reverb_chorus_settings_screen(n)
+    elif cur_screen == SCREN_LAYER_SPLIT:
+        handle_layer_split_screen(n)
     # key 3 is save global settings
     if n == config.KEY3_PIN:
         reverb_enabled = True if sReverbState == 'ON' else False
         chorus_enabled = True if sChorusState == 'ON' else False
         save_settings_to_file(current_reverb_settings, current_chorus_settings,
            reverb_enabled, chorus_enabled)
+    # key 4 turns off layering
+    if n == config.KEY4_PIN:
+        turn_off_layering()
 
 def init_buttons():
     # Hook into the existing DigitalInputDevice objects already created by config.py / ST7789
@@ -319,7 +406,7 @@ def splash_screen():
 
 def update_all_effects_settings(effects_type):
     global current_reverb_settings, current_chorus_settings
-    print(f'->update_all_effects_settings {effects_type}')
+    #print(f'->update_all_effects_settings {effects_type}')
     ls = load_settings()
     if effects_type == 'reverb':
         current_reverb_settings = convert_json_to_tuples_list(ls,'reverb')
@@ -338,7 +425,7 @@ def update_all_effects_settings(effects_type):
  
 def load_initial_effects():
     global sReverbState, sChorusState
-    print('-->load_initial_effects')
+    #print('-->load_initial_effects')
     # if we just loaded the program, set reverb/chorus on if necessary
     ls = load_settings() # see if reverb/chorus enabled
     r_en = ls.get('reverb_enabled',None)
@@ -378,22 +465,33 @@ def home_screen():
     disp.ShowImage(im_r)
 
 def menu_screen():
+    # handle paging - only 4 items per screen
     items_page_0 = ['VOLUME', 'MIDI CH', 'TRANSPOSE', 'LOAD SOUNDFONT']
-    items_page_1 = ['EFFECTS']
+    items_page_1 = ['EFFECTS','LAYER/SPLIT']
     image1 = Image.new("RGB", (240, 240), (0, 0, 255))
     draw1 = ImageDraw.Draw(image1)
+    # paging
+    page = cur_menu_selection // nbr_settings_per_page
+    if page == 0:
+        list_items = items_page_0
+    if page == 1:
+        list_items = items_page_1
+    first_index = page * nbr_settings_per_page
+    last_index = min(first_index + nbr_settings_per_page, first_index + len(list_items))
+    # done paging
     y = HOME_SEL1_Y + 20
     draw1.text((MENU_TITLE_X, HOME_TITLE_Y), 'SELECT:', fill = "WHITE",font=Font1)
-    if scrn_menu_page == 0:  
-        list_items = items_page_0
-    if scrn_menu_page == 1:  
-        list_items = items_page_1
-    for index, item in enumerate(list_items):
-        s = item
-        if index == cur_menu_selection:
-            s = '->' + item
+    print(f'page {page} first {first_index}, last {last_index}, list_items {list_items}')
+    i = first_index
+    index = 0
+    while i < last_index:
+        s = list_items[index]
+        if i == cur_menu_selection:
+            s = '->' + s
         draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
         y += HOME_SEL_Y_OFFSET
+        i += 1
+        index += 1
     im_r1=image1.rotate(90)
     disp.ShowImage(im_r1)
 
@@ -499,7 +597,7 @@ def effects_settings_screen():
        REVERB: OFF
        CHORUS: OFF
     '''
-    # nbr_effects_settings_per_page = 4
+    # nbr_settings_per_page = 4
     global current_reverb_settings, current_chorus_settings, effect_settings_selected
     #print(f'REVERB/CHORUS SETTING SCREEN')
     image1 = Image.new("RGB", (240, 240), (0, 0, 255))
@@ -544,9 +642,9 @@ def effects_settings_screen():
     # paging
     if effect_settings_selected >= len(temp_settings):
         effect_settings_selected = len(temp_settings) -1
-    page = effect_settings_selected // nbr_effects_settings_per_page
-    first_index = page * nbr_effects_settings_per_page
-    last_index = min(first_index + nbr_effects_settings_per_page, len(temp_settings))
+    page = effect_settings_selected // nbr_settings_per_page
+    first_index = page * nbr_settings_per_page
+    last_index = min(first_index + nbr_settings_per_page, len(temp_settings))
     print(f'temp_settings {temp_settings}')
     print(f'range {first_index} to {last_index}')
     print(f'effect_settings_selected {effect_settings_selected}')
@@ -601,4 +699,51 @@ def update_effects_value(increment=True):
     # change on the jalv instance
     set_effect_parameter(effect_settings_type, cur_name, new_value)
     
-    
+def layer_split_screen():
+    #TODO ability to turn off layer/split
+    image1 = Image.new("RGB", (240, 240), (0, 0, 255))
+    draw1 = ImageDraw.Draw(image1)
+    # layer or split title
+    if cur_layer_split_choice == 0:
+        s = 'LAYER'
+    else:
+        s = 'SPLIT'
+    draw1.text((5, HOME_TITLE_Y), s, fill = "WHITE",font=Font1)
+    y = HOME_TITLE_Y + HOME_SEL_Y_OFFSET
+    # only show this if in split mode
+    if cur_layer_split_choice == 1: # split
+        s = f'SPLIT AT {split_point}'
+        if layer_split_index == 0:
+            s = '->' + s
+        draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
+    y = 2 * HOME_SEL1_Y
+    # prog 1 selection
+    s = f'PROG1: {layer_1_prog_number}'
+    if (cur_layer_split_choice == 0 and layer_split_index == 0) or \
+    (cur_layer_split_choice == 1 and layer_split_index == 1):
+        s = '->' + s
+    draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
+    y += HOME_SEL_Y_OFFSET
+    s = lookup_prog_name_from_prog_number(layer_1_prog_number)
+    draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
+    # prog 2 selection
+    y += HOME_SEL_Y_OFFSET
+    s = f'PROG2: {layer_2_prog_number}'
+    if (cur_layer_split_choice == 0 and layer_split_index == 1) or \
+    (cur_layer_split_choice == 1 and layer_split_index == 2):
+        s = '->' + s
+    draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
+    y += HOME_SEL_Y_OFFSET - 5
+    s = lookup_prog_name_from_prog_number(layer_2_prog_number)
+    draw1.text((HOME_SELECTION_X, y), s, fill = "WHITE",font=Font1)
+    im_r1=image1.rotate(90)
+    disp.ShowImage(im_r1)
+
+def update_layer_sound():
+    layer_sounds(midi_chan1=1, bank1=0, prog1=layer_1_prog_number, midi_chan2=2, bank2=0, prog2=layer_2_prog_number)
+
+def turn_off_layering():
+    print("LAYERING turned off")
+    fs_turn_off_layering() 
+    home_screen()
+
